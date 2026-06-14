@@ -44,9 +44,9 @@ export async function detectPitch(
   const noteEvents = outputToNotesPoly(
     allFrames,
     allOnsets,
-    0.25, // onsetThresh
-    0.15, // frameThresh
-    5,    // minNoteLen
+    0.3,  // onsetThresh (slightly higher to reduce spurious onsets)
+    0.2,  // frameThresh
+    8,    // minNoteLen (longer = fewer tiny fragments)
     true, // inferOnsets
     null, // maxFreq
     null, // minFreq
@@ -57,12 +57,41 @@ export async function detectPitch(
   const withBends = addPitchBendsToNoteEvents(allContours, noteEvents);
   const timedNotes = noteFramesToTime(withBends);
 
-  return timedNotes.map((n) => ({
+  const rawNotes: Note[] = timedNotes.map((n) => ({
     pitch: n.pitchMidi,
     startTime: n.startTimeSeconds,
     duration: n.durationSeconds,
     velocity: Math.round(Math.min(n.amplitude * 127, 127)),
   }));
+
+  return stabilizeNotes(rawNotes);
+}
+
+function stabilizeNotes(notes: Note[]): Note[] {
+  if (notes.length === 0) return notes;
+
+  const sorted = [...notes].sort((a, b) => a.startTime - b.startTime);
+
+  const filtered = sorted.filter((n) => n.duration >= 0.08);
+  if (filtered.length === 0) return sorted;
+
+  const merged: Note[] = [{ ...filtered[0] }];
+
+  for (let i = 1; i < filtered.length; i++) {
+    const prev = merged[merged.length - 1];
+    const curr = filtered[i];
+    const gap = curr.startTime - (prev.startTime + prev.duration);
+    const samePitch = Math.abs(curr.pitch - prev.pitch) <= 1;
+
+    if (samePitch && gap < 0.1) {
+      prev.duration = curr.startTime + curr.duration - prev.startTime;
+      prev.velocity = Math.max(prev.velocity, curr.velocity);
+    } else {
+      merged.push({ ...curr });
+    }
+  }
+
+  return merged;
 }
 
 function resampleTo22050(data: Float32Array, fromRate: number): Float32Array {

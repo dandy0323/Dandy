@@ -23,18 +23,18 @@ export async function detectPitch(
   const modelUrl = "/model/model.json";
   const basicPitch = new BasicPitch(modelUrl);
 
-  let frames: number[][] = [];
-  let onsets: number[][] = [];
-  let contours: number[][] = [];
+  const allFrames: number[][] = [];
+  const allOnsets: number[][] = [];
+  const allContours: number[][] = [];
 
-  const audioBuffer = floatToAudioBuffer(audioData, sampleRate);
+  const resampled = resampleTo22050(audioData, sampleRate);
 
   await basicPitch.evaluateModel(
-    audioBuffer,
+    resampled,
     (f, o, c) => {
-      frames = f;
-      onsets = o;
-      contours = c;
+      allFrames.push(...f);
+      allOnsets.push(...o);
+      allContours.push(...c);
     },
     (percent) => {
       onProgress?.(percent);
@@ -42,8 +42,8 @@ export async function detectPitch(
   );
 
   const noteEvents = outputToNotesPoly(
-    frames,
-    onsets,
+    allFrames,
+    allOnsets,
     0.25, // onsetThresh
     0.15, // frameThresh
     5,    // minNoteLen
@@ -54,7 +54,7 @@ export async function detectPitch(
     11,   // energyTolerance
   );
 
-  const withBends = addPitchBendsToNoteEvents(contours, noteEvents);
+  const withBends = addPitchBendsToNoteEvents(allContours, noteEvents);
   const timedNotes = noteFramesToTime(withBends);
 
   return timedNotes.map((n) => ({
@@ -65,9 +65,21 @@ export async function detectPitch(
   }));
 }
 
-function floatToAudioBuffer(data: Float32Array, sampleRate: number): AudioBuffer {
-  const audioCtx = new OfflineAudioContext(1, data.length, sampleRate);
-  const buffer = audioCtx.createBuffer(1, data.length, sampleRate);
-  buffer.getChannelData(0).set(data);
-  return buffer;
+function resampleTo22050(data: Float32Array, fromRate: number): Float32Array {
+  const targetRate = 22050;
+  if (Math.abs(fromRate - targetRate) < 1) return data;
+
+  const ratio = fromRate / targetRate;
+  const newLength = Math.round(data.length / ratio);
+  const result = new Float32Array(newLength);
+
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = i * ratio;
+    const low = Math.floor(srcIndex);
+    const high = Math.min(low + 1, data.length - 1);
+    const frac = srcIndex - low;
+    result[i] = data[low] * (1 - frac) + data[high] * frac;
+  }
+
+  return result;
 }

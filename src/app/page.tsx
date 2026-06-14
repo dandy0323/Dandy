@@ -89,6 +89,34 @@ export default function Home() {
 
           {phase === "result" && (
             <div className="space-y-6">
+              <div>
+                <button
+                  onClick={() => {
+                    try {
+                      const ctx = new AudioContext();
+                      const osc = ctx.createOscillator();
+                      const gain = ctx.createGain();
+                      osc.type = "sine";
+                      osc.frequency.value = 440;
+                      gain.gain.value = 0.3;
+                      osc.connect(gain);
+                      gain.connect(ctx.destination);
+                      osc.start();
+                      osc.stop(ctx.currentTime + 0.5);
+                      alert(`Test sound played! AudioContext state: ${ctx.state}, sampleRate: ${ctx.sampleRate}`);
+                    } catch (e) {
+                      alert(`Error: ${e}`);
+                    }
+                  }}
+                  className="px-3 py-1 text-xs bg-yellow-400 text-black rounded"
+                >
+                  Test Sound (debug)
+                </button>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Notes data: {original.length} original, {upperHarmony.length} upper, {lowerHarmony.length} lower
+                  {original.length > 0 && ` | First note: pitch=${original[0].pitch} start=${original[0].startTime.toFixed(2)} dur=${original[0].duration.toFixed(3)}`}
+                </p>
+              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200">

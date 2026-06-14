@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react";
 import type { Note, AppPhase } from "@/types/music";
-import { detectPitch } from "@/lib/pitch-detector";
 import { generateHarmony } from "@/lib/harmony-generator";
 import RecordButton from "@/components/RecordButton";
 import ScoreDisplay from "@/components/ScoreDisplay";
@@ -10,6 +9,7 @@ import PlaybackControls from "@/components/PlaybackControls";
 
 export default function Home() {
   const [phase, setPhase] = useState<AppPhase>("record");
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [original, setOriginal] = useState<Note[]>([]);
   const [upperHarmony, setUpperHarmony] = useState<Note[]>([]);
   const [lowerHarmony, setLowerHarmony] = useState<Note[]>([]);
@@ -22,15 +22,19 @@ export default function Home() {
   });
 
   const handleRecordingComplete = useCallback(
-    (audioData: Float32Array, sampleRate: number) => {
+    async (audioData: Float32Array, sampleRate: number) => {
       setPhase("detect");
+      setAnalyzeProgress(0);
 
-      requestAnimationFrame(() => {
-        const notes = detectPitch(audioData, sampleRate);
+      try {
+        const { detectPitch } = await import("@/lib/pitch-detector");
+        const notes = await detectPitch(audioData, sampleRate, (percent) => {
+          setAnalyzeProgress(Math.round(percent * 100));
+        });
 
         if (notes.length === 0) {
           setPhase("record");
-          alert("Could not detect any melody. Please try again, humming louder and clearer.");
+          alert("メロディーを検出できませんでした。もう少し大きな声でハミングしてみてください。");
           return;
         }
 
@@ -41,7 +45,11 @@ export default function Home() {
         setLowerHarmony(harmony.lowerHarmony);
         setKeyInfo(`${harmony.key} ${harmony.scale}`);
         setPhase("result");
-      });
+      } catch (err) {
+        console.error("Pitch detection failed:", err);
+        setPhase("record");
+        alert(`解析中にエラーが発生しました: ${err}`);
+      }
     },
     []
   );
@@ -62,7 +70,7 @@ export default function Home() {
           <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
             Harmony Hum
           </h1>
-          <p className="text-xs text-zinc-400">Hum a melody, get harmonies</p>
+          <p className="text-xs text-zinc-400">鼻歌からハーモニーを生成</p>
         </div>
       </header>
 
@@ -71,10 +79,10 @@ export default function Home() {
           {phase === "record" && (
             <div className="flex flex-col items-center gap-6 py-12">
               <h2 className="text-2xl font-semibold text-zinc-800 dark:text-zinc-200">
-                Hum your melody
+                メロディーをハミング
               </h2>
               <p className="text-zinc-500 dark:text-zinc-400 text-center max-w-md">
-                Press the button and hum a melody. We will detect the notes and create harmonies for you.
+                ボタンを押してメロディーをハミングしてください。音を検出してハーモニーを生成します。
               </p>
               <RecordButton onRecordingComplete={handleRecordingComplete} />
             </div>
@@ -83,50 +91,33 @@ export default function Home() {
           {phase === "detect" && (
             <div className="flex flex-col items-center gap-4 py-12">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-zinc-500 dark:text-zinc-400">Analyzing your melody...</p>
+              <p className="text-zinc-500 dark:text-zinc-400">メロディーを解析中...</p>
+              {analyzeProgress > 0 && (
+                <div className="w-48">
+                  <div className="h-2 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                      style={{ width: `${analyzeProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-zinc-400 text-center mt-1">{analyzeProgress}%</p>
+                </div>
+              )}
             </div>
           )}
 
           {phase === "result" && (
             <div className="space-y-6">
-              <div>
-                <button
-                  onClick={() => {
-                    try {
-                      const ctx = new AudioContext();
-                      const osc = ctx.createOscillator();
-                      const gain = ctx.createGain();
-                      osc.type = "sine";
-                      osc.frequency.value = 440;
-                      gain.gain.value = 0.3;
-                      osc.connect(gain);
-                      gain.connect(ctx.destination);
-                      osc.start();
-                      osc.stop(ctx.currentTime + 0.5);
-                      alert(`Test sound played! AudioContext state: ${ctx.state}, sampleRate: ${ctx.sampleRate}`);
-                    } catch (e) {
-                      alert(`Error: ${e}`);
-                    }
-                  }}
-                  className="px-3 py-1 text-xs bg-yellow-400 text-black rounded"
-                >
-                  Test Sound (debug)
-                </button>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Notes data: {original.length} original, {upperHarmony.length} upper, {lowerHarmony.length} lower
-                  {original.length > 0 && ` | First note: pitch=${original[0].pitch} start=${original[0].startTime.toFixed(2)} dur=${original[0].duration.toFixed(3)}`}
-                </p>
-              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200">
-                    Score
+                    スコア
                   </h2>
                   {keyInfo && (
                     <p className="text-sm text-zinc-500">
-                      Detected key: <span className="font-medium text-zinc-700 dark:text-zinc-300">{keyInfo}</span>
+                      検出キー: <span className="font-medium text-zinc-700 dark:text-zinc-300">{keyInfo}</span>
                       {" / "}
-                      {original.length} notes
+                      {original.length} 音
                     </p>
                   )}
                 </div>
@@ -134,7 +125,7 @@ export default function Home() {
                   onClick={handleReset}
                   className="px-4 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 >
-                  Record again
+                  もう一度録音
                 </button>
               </div>
 
@@ -161,7 +152,7 @@ export default function Home() {
 
       <footer className="border-t border-zinc-200 dark:border-zinc-800 px-6 py-3">
         <p className="text-center text-xs text-zinc-400">
-          All processing runs in your browser. No data is sent to any server.
+          すべての処理はブラウザ内で完結します。データはサーバーに送信されません。
         </p>
       </footer>
     </div>

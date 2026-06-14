@@ -30,11 +30,26 @@ function midiToFreq(midi: number): number {
 }
 
 let sharedContext: AudioContext | null = null;
+let silentAudio: HTMLAudioElement | null = null;
+
+function unlockIOSAudio() {
+  if (silentAudio) return;
+
+  // A tiny silent WAV that forces iOS into "media" playback mode,
+  // bypassing the silent/manner mode switch.
+  const silentWav =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  silentAudio = new Audio(silentWav);
+  silentAudio.loop = true;
+  silentAudio.volume = 0.01;
+  silentAudio.play().catch(() => {});
+}
 
 function getAudioContext(): AudioContext {
   if (!sharedContext || sharedContext.state === "closed") {
     sharedContext = new AudioContext();
   }
+  unlockIOSAudio();
   return sharedContext;
 }
 
@@ -163,6 +178,11 @@ export class Player {
       }
     }
     this.gainNodes = [];
+
+    if (silentAudio) {
+      silentAudio.pause();
+      silentAudio = null;
+    }
   }
 
   get playing(): boolean {

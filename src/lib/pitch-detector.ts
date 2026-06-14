@@ -27,10 +27,10 @@ export async function detectPitch(
   let onsets: number[][] = [];
   let contours: number[][] = [];
 
-  const resampled = resampleTo22050(audioData, sampleRate);
+  const audioBuffer = floatToAudioBuffer(audioData, sampleRate);
 
   await basicPitch.evaluateModel(
-    resampled,
+    audioBuffer,
     (f, o, c) => {
       frames = f;
       onsets = o;
@@ -44,9 +44,9 @@ export async function detectPitch(
   const noteEvents = outputToNotesPoly(
     frames,
     onsets,
-    0.5,  // onsetThresh
-    0.3,  // frameThresh
-    11,   // minNoteLen (frames)
+    0.25, // onsetThresh
+    0.15, // frameThresh
+    5,    // minNoteLen
     true, // inferOnsets
     null, // maxFreq
     null, // minFreq
@@ -65,21 +65,9 @@ export async function detectPitch(
   }));
 }
 
-function resampleTo22050(data: Float32Array, fromRate: number): Float32Array {
-  const targetRate = 22050;
-  if (Math.abs(fromRate - targetRate) < 1) return data;
-
-  const ratio = fromRate / targetRate;
-  const newLength = Math.round(data.length / ratio);
-  const result = new Float32Array(newLength);
-
-  for (let i = 0; i < newLength; i++) {
-    const srcIndex = i * ratio;
-    const low = Math.floor(srcIndex);
-    const high = Math.min(low + 1, data.length - 1);
-    const frac = srcIndex - low;
-    result[i] = data[low] * (1 - frac) + data[high] * frac;
-  }
-
-  return result;
+function floatToAudioBuffer(data: Float32Array, sampleRate: number): AudioBuffer {
+  const audioCtx = new OfflineAudioContext(1, data.length, sampleRate);
+  const buffer = audioCtx.createBuffer(1, data.length, sampleRate);
+  buffer.getChannelData(0).set(data);
+  return buffer;
 }

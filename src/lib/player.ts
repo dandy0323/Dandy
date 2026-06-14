@@ -20,38 +20,49 @@ export function getTrackColor(track: TrackType): string {
 }
 
 const TRACK_CONFIG: Record<TrackType, { type: OscillatorType; gain: number }> = {
-  original: { type: "triangle", gain: 0.3 },
-  upperHarmony: { type: "sine", gain: 0.2 },
-  lowerHarmony: { type: "sine", gain: 0.2 },
+  original: { type: "triangle", gain: 0.25 },
+  upperHarmony: { type: "sine", gain: 0.18 },
+  lowerHarmony: { type: "sine", gain: 0.18 },
 };
 
 function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
+let sharedContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!sharedContext || sharedContext.state === "closed") {
+    sharedContext = new AudioContext();
+  }
+  return sharedContext;
+}
+
 export class Player {
-  private audioContext: AudioContext | null = null;
+  private oscillators: OscillatorNode[] = [];
+  private gainNodes: GainNode[] = [];
   private isPlaying = false;
   private progressTimer: ReturnType<typeof setInterval> | null = null;
+  private endTimer: ReturnType<typeof setTimeout> | null = null;
   private startTime = 0;
-
-  private ensureContext(): AudioContext {
-    if (!this.audioContext || this.audioContext.state === "closed") {
-      this.audioContext = new AudioContext();
-    }
-    return this.audioContext;
-  }
 
   async play(options: PlaybackOptions): Promise<void> {
     this.stop();
 
-    const ctx = this.ensureContext();
+    const ctx = getAudioContext();
+
     if (ctx.state === "suspended") {
       await ctx.resume();
     }
 
     this.isPlaying = true;
-    const now = ctx.currentTime + 0.05;
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = 1.0;
+    masterGain.connect(ctx.destination);
+    this.gainNodes.push(masterGain);
+
+    const now = ctx.currentTime + 0.1;
     this.startTime = now;
 
     let maxEnd = 0;
@@ -65,48 +76,60 @@ export class Player {
       for (const note of notes) {
         const freq = midiToFreq(note.pitch);
         const noteStart = now + note.startTime;
-        const noteEnd = noteStart + note.duration;
+        const dur = Math.max(note.duration, 0.05);
+        const noteEnd = noteStart + dur;
 
         const osc = ctx.createOscillator();
         osc.type = config.type;
-        osc.frequency.value = freq;
+        osc.frequency.setValueAtTime(freq, noteStart);
 
-        const gainNode = ctx.createGain();
-        const vel = (note.velocity / 127) * config.gain;
+        const env = ctx.createGain();
+        const vol = (note.velocity / 127) * config.gain;
 
-        gainNode.gain.setValueAtTime(0, noteStart);
-        gainNode.gain.linearRampToValueAtTime(vel, noteStart + 0.03);
-        gainNode.gain.setValueAtTime(vel, noteEnd - 0.03);
-        gainNode.gain.linearRampToValueAtTime(0, noteEnd);
+        const attack = Math.min(0.02, dur * 0.1);
+        const release = Math.min(0.02, dur * 0.1);
 
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
+        env.gain.setValueAtTime(0.001, noteStart);
+        env.gain.exponentialRampToValueAtTime(vol, noteStart + attack);
+        env.gain.setValueAtTime(vol, noteEnd - release);
+        env.gain.exponentialRampToValueAtTime(0.001, noteEnd);
+
+        osc.connect(env);
+        env.connect(masterGain);
 
         osc.start(noteStart);
-        osc.stop(noteEnd + 0.01);
+        osc.stop(noteEnd + 0.05);
+
+        this.oscillators.push(osc);
+        this.gainNodes.push(env);
 
         if (noteEnd > maxEnd) maxEnd = noteEnd;
       }
     }
 
+    if (maxEnd === 0) {
+      this.isPlaying = false;
+      options.onEnd?.();
+      return;
+    }
+
     if (options.onProgress) {
       this.progressTimer = setInterval(() => {
-        if (!this.isPlaying || !this.audioContext) {
+        if (!this.isPlaying) {
           if (this.progressTimer) clearInterval(this.progressTimer);
           return;
         }
-        const elapsed = this.audioContext.currentTime - this.startTime;
-        options.onProgress!(elapsed);
+        const ctx2 = getAudioContext();
+        const elapsed = ctx2.currentTime - this.startTime;
+        options.onProgress!(Math.max(0, elapsed));
       }, 50);
     }
 
-    const totalDuration = (maxEnd - now) * 1000 + 500;
-    setTimeout(() => {
-      if (this.isPlaying) {
-        this.stop();
-        options.onEnd?.();
-      }
-    }, totalDuration);
+    const totalMs = (maxEnd - now) * 1000 + 300;
+    this.endTimer = setTimeout(() => {
+      this.stop();
+      options.onEnd?.();
+    }, totalMs);
   }
 
   stop(): void {
@@ -117,10 +140,29 @@ export class Player {
       this.progressTimer = null;
     }
 
-    if (this.audioContext && this.audioContext.state !== "closed") {
-      this.audioContext.close();
-      this.audioContext = null;
+    if (this.endTimer) {
+      clearTimeout(this.endTimer);
+      this.endTimer = null;
     }
+
+    for (const osc of this.oscillators) {
+      try {
+        osc.stop();
+        osc.disconnect();
+      } catch {
+        // already stopped
+      }
+    }
+    this.oscillators = [];
+
+    for (const gain of this.gainNodes) {
+      try {
+        gain.disconnect();
+      } catch {
+        // already disconnected
+      }
+    }
+    this.gainNodes = [];
   }
 
   get playing(): boolean {

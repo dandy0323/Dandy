@@ -25,7 +25,7 @@ export default function PlaybackControls({
     upper: true,
     lower: true,
   });
-  const playerRef = useRef<Player | null>(null);
+  const playerRef = useRef(new Player());
 
   const toggleTrack = useCallback(
     (track: "original" | "upper" | "lower") => {
@@ -38,9 +38,12 @@ export default function PlaybackControls({
     [onTrackToggle]
   );
 
-  const play = useCallback(async () => {
-    if (!playerRef.current) {
-      playerRef.current = new Player();
+  const handlePlayStop = useCallback(() => {
+    if (isPlaying) {
+      playerRef.current.stop();
+      setIsPlaying(false);
+      onTimeUpdate?.(0);
+      return;
     }
 
     const mutedTracks = new Set<TrackType>();
@@ -50,7 +53,7 @@ export default function PlaybackControls({
 
     setIsPlaying(true);
 
-    await playerRef.current.play({
+    playerRef.current.play({
       tracks: {
         original,
         upperHarmony,
@@ -63,14 +66,7 @@ export default function PlaybackControls({
         onTimeUpdate?.(0);
       },
     });
-  }, [original, upperHarmony, lowerHarmony, tracks, onTimeUpdate]);
-
-  const stop = useCallback(() => {
-    playerRef.current?.stop();
-    playerRef.current = null;
-    setIsPlaying(false);
-    onTimeUpdate?.(0);
-  }, [onTimeUpdate]);
+  }, [isPlaying, original, upperHarmony, lowerHarmony, tracks, onTimeUpdate]);
 
   const trackButtons = [
     { key: "original" as const, label: "Original", color: "bg-blue-500", active: tracks.original },
@@ -82,7 +78,7 @@ export default function PlaybackControls({
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 justify-center">
         <button
-          onClick={isPlaying ? stop : play}
+          onClick={handlePlayStop}
           className="w-12 h-12 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition-colors"
         >
           {isPlaying ? (

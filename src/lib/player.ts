@@ -31,25 +31,60 @@ function midiToFreq(midi: number): number {
 
 let sharedContext: AudioContext | null = null;
 let silentAudio: HTMLAudioElement | null = null;
+let mediaSource: MediaElementAudioSourceNode | null = null;
 
-function unlockIOSAudio() {
-  if (silentAudio) return;
+function createSilentWavBlob(): Blob {
+  const sampleRate = 22050;
+  const duration = 1;
+  const numSamples = sampleRate * duration;
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
 
-  // A tiny silent WAV that forces iOS into "media" playback mode,
-  // bypassing the silent/manner mode switch.
-  const silentWav =
-    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-  silentAudio = new Audio(silentWav);
-  silentAudio.loop = true;
-  silentAudio.volume = 0.01;
-  silentAudio.play().catch(() => {});
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, numSamples * 2, true);
+
+  // Write near-silent samples (not exactly 0 to avoid optimization)
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, 1, true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
 }
 
 function getAudioContext(): AudioContext {
   if (!sharedContext || sharedContext.state === "closed") {
     sharedContext = new AudioContext();
   }
-  unlockIOSAudio();
+
+  if (!silentAudio) {
+    const blob = createSilentWavBlob();
+    const url = URL.createObjectURL(blob);
+    silentAudio = new Audio(url);
+    silentAudio.loop = true;
+    silentAudio.setAttribute("playsinline", "true");
+    silentAudio.setAttribute("webkit-playsinline", "true");
+
+    mediaSource = sharedContext.createMediaElementSource(silentAudio);
+    mediaSource.connect(sharedContext.destination);
+
+    silentAudio.play().catch(() => {});
+  }
+
   return sharedContext;
 }
 
@@ -181,7 +216,12 @@ export class Player {
 
     if (silentAudio) {
       silentAudio.pause();
+      silentAudio.src = "";
       silentAudio = null;
+    }
+    if (mediaSource) {
+      try { mediaSource.disconnect(); } catch { /* */ }
+      mediaSource = null;
     }
   }
 

@@ -72,7 +72,7 @@ function stabilizeNotes(notes: Note[]): Note[] {
 
   const sorted = [...notes].sort((a, b) => a.startTime - b.startTime);
 
-  const filtered = sorted.filter((n) => n.duration >= 0.08);
+  const filtered = sorted.filter((n) => n.duration >= 0.05);
   if (filtered.length === 0) return sorted;
 
   const merged: Note[] = [{ ...filtered[0] }];
@@ -81,9 +81,9 @@ function stabilizeNotes(notes: Note[]): Note[] {
     const prev = merged[merged.length - 1];
     const curr = filtered[i];
     const gap = curr.startTime - (prev.startTime + prev.duration);
-    const samePitch = Math.abs(curr.pitch - prev.pitch) <= 1;
+    const samePitch = curr.pitch === prev.pitch;
 
-    if (samePitch && gap < 0.1) {
+    if (samePitch && gap < 0.05) {
       prev.duration = curr.startTime + curr.duration - prev.startTime;
       prev.velocity = Math.max(prev.velocity, curr.velocity);
     } else {

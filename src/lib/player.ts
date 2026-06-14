@@ -1,20 +1,10 @@
 import type { Note } from "@/types/music";
 
-let toneModule: typeof import("tone") | null = null;
-
-async function getTone() {
-  if (!toneModule) {
-    toneModule = await import("tone");
-  }
-  return toneModule;
-}
-
 export type TrackType = "original" | "upperHarmony" | "lowerHarmony";
 
 export interface PlaybackOptions {
   tracks: Partial<Record<TrackType, Note[]>>;
   mutedTracks?: Set<TrackType>;
-  bpm?: number;
   onProgress?: (time: number) => void;
   onEnd?: () => void;
 }
@@ -29,88 +19,108 @@ export function getTrackColor(track: TrackType): string {
   return TRACK_COLORS[track];
 }
 
-const TRACK_SYNTH_CONFIG: Record<TrackType, { type: OscillatorType; volume: number }> = {
-  original: { type: "triangle", volume: -6 },
-  upperHarmony: { type: "sine", volume: -10 },
-  lowerHarmony: { type: "sine", volume: -10 },
+const TRACK_CONFIG: Record<TrackType, { type: OscillatorType; gain: number }> = {
+  original: { type: "triangle", gain: 0.3 },
+  upperHarmony: { type: "sine", gain: 0.2 },
+  lowerHarmony: { type: "sine", gain: 0.2 },
 };
 
+function midiToFreq(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
 export class Player {
-  private synths: Map<TrackType, InstanceType<typeof import("tone").PolySynth>> = new Map();
+  private audioContext: AudioContext | null = null;
   private isPlaying = false;
-  private scheduledEvents: number[] = [];
+  private progressTimer: ReturnType<typeof setInterval> | null = null;
+  private startTime = 0;
+
+  private ensureContext(): AudioContext {
+    if (!this.audioContext || this.audioContext.state === "closed") {
+      this.audioContext = new AudioContext();
+    }
+    return this.audioContext;
+  }
 
   async play(options: PlaybackOptions): Promise<void> {
-    const Tone = await getTone();
-    await Tone.start();
-
     this.stop();
-    this.isPlaying = true;
 
-    const transport = Tone.getTransport();
-    transport.cancel();
-    transport.bpm.value = options.bpm ?? 120;
-    transport.position = 0;
+    const ctx = this.ensureContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+
+    this.isPlaying = true;
+    const now = ctx.currentTime + 0.05;
+    this.startTime = now;
+
+    let maxEnd = 0;
 
     for (const [trackType, notes] of Object.entries(options.tracks) as [TrackType, Note[]][]) {
       if (options.mutedTracks?.has(trackType)) continue;
       if (!notes || notes.length === 0) continue;
 
-      const config = TRACK_SYNTH_CONFIG[trackType];
-      const synth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: config.type },
-        envelope: { attack: 0.05, decay: 0.1, sustain: 0.8, release: 0.3 },
-        volume: config.volume,
-      }).toDestination();
-
-      this.synths.set(trackType, synth);
+      const config = TRACK_CONFIG[trackType];
 
       for (const note of notes) {
-        const freq = 440 * Math.pow(2, (note.pitch - 69) / 12);
-        const id = transport.schedule((time) => {
-          synth.triggerAttackRelease(freq, note.duration, time, note.velocity / 127);
-        }, note.startTime);
-        this.scheduledEvents.push(id);
+        const freq = midiToFreq(note.pitch);
+        const noteStart = now + note.startTime;
+        const noteEnd = noteStart + note.duration;
+
+        const osc = ctx.createOscillator();
+        osc.type = config.type;
+        osc.frequency.value = freq;
+
+        const gainNode = ctx.createGain();
+        const vel = (note.velocity / 127) * config.gain;
+
+        gainNode.gain.setValueAtTime(0, noteStart);
+        gainNode.gain.linearRampToValueAtTime(vel, noteStart + 0.03);
+        gainNode.gain.setValueAtTime(vel, noteEnd - 0.03);
+        gainNode.gain.linearRampToValueAtTime(0, noteEnd);
+
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        osc.start(noteStart);
+        osc.stop(noteEnd + 0.01);
+
+        if (noteEnd > maxEnd) maxEnd = noteEnd;
       }
     }
 
-    const allNotes = Object.values(options.tracks).flat().filter(Boolean) as Note[];
-    if (allNotes.length > 0) {
-      const maxEnd = Math.max(...allNotes.map((n) => n.startTime + n.duration));
-
-      const endId = transport.schedule(() => {
-        this.stop();
-        options.onEnd?.();
-      }, maxEnd + 0.5);
-      this.scheduledEvents.push(endId);
-    }
-
     if (options.onProgress) {
-      const progressInterval = setInterval(() => {
-        if (!this.isPlaying) {
-          clearInterval(progressInterval);
+      this.progressTimer = setInterval(() => {
+        if (!this.isPlaying || !this.audioContext) {
+          if (this.progressTimer) clearInterval(this.progressTimer);
           return;
         }
-        const seconds = transport.seconds;
-        options.onProgress!(seconds);
+        const elapsed = this.audioContext.currentTime - this.startTime;
+        options.onProgress!(elapsed);
       }, 50);
     }
 
-    transport.start();
+    const totalDuration = (maxEnd - now) * 1000 + 500;
+    setTimeout(() => {
+      if (this.isPlaying) {
+        this.stop();
+        options.onEnd?.();
+      }
+    }, totalDuration);
   }
 
-  async stop(): Promise<void> {
-    const Tone = await getTone();
-    const transport = Tone.getTransport();
-    transport.stop();
-    transport.cancel();
-
-    for (const synth of this.synths.values()) {
-      synth.dispose();
-    }
-    this.synths.clear();
-    this.scheduledEvents = [];
+  stop(): void {
     this.isPlaying = false;
+
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
   }
 
   get playing(): boolean {

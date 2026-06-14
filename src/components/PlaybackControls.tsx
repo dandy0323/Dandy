@@ -65,8 +65,9 @@ export default function PlaybackControls({
     });
   }, [original, upperHarmony, lowerHarmony, tracks, onTimeUpdate]);
 
-  const stop = useCallback(async () => {
-    await playerRef.current?.stop();
+  const stop = useCallback(() => {
+    playerRef.current?.stop();
+    playerRef.current = null;
     setIsPlaying(false);
     onTimeUpdate?.(0);
   }, [onTimeUpdate]);

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Face circle -->
+  <circle cx="16" cy="16" r="14" fill="#3b82f6" />
+  <!-- Left eye -->
+  <ellipse cx="11" cy="13" rx="1.5" ry="2" fill="white" />
+  <!-- Right eye -->
+  <ellipse cx="21" cy="13" rx="1.5" ry="2" fill="white" />
+  <!-- Puckered lips (humming mouth) -->
+  <ellipse cx="16" cy="21" rx="3" ry="2.5" fill="#ef4444" />
+  <ellipse cx="16" cy="21" rx="1.8" ry="1.5" fill="#1e3a5f" />
+  <!-- Music notes floating out -->
+  <g fill="white" opacity="0.9">
+    <!-- Note 1 -->
+    <ellipse cx="25" cy="8" rx="2" ry="1.5" transform="rotate(-20 25 8)" />
+    <rect x="26.5" y="2" width="1" height="6" rx="0.5" transform="rotate(-5 27 5)" />
+    <!-- Note 2 -->
+    <ellipse cx="28" cy="13" rx="1.5" ry="1.2" transform="rotate(-15 28 13)" />
+    <rect x="29.2" y="7.5" width="0.8" height="5.5" rx="0.4" transform="rotate(-5 29.5 10)" />
+  </g>
+</svg>
